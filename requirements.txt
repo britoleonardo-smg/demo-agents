@@ -1,0 +1,16 @@
+# LLM
+python-dotenv
+openai
+google-genai
+
+# Frameworks
+langchain
+langchain-openai
+langchain-google-genai
+langgraph
+langgraph-cli[inmem]
+
+# Ferramentas dos agentes
+ddgs
+wikipedia
+numexpr
