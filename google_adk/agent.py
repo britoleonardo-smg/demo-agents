@@ -1,3 +1,19 @@
+"""Estágio 04 — o mesmo agente, declarativo, com o ADK do Google.
+
+Delta em relação ao estágio 03:
+
+1. **Sem grafo, sem decorador.** `Agent(name, model, instruction, tools)` e
+   acabou. As ferramentas são funções Python comuns — a docstring vira a
+   descrição e os type hints viram o schema, sem nenhuma anotação.
+2. **Runtime incluído.** `Runner` e `SessionService` trazem sessão e histórico
+   prontos, em vez de você montar.
+3. **Streaming por evento.** A execução chega como um fluxo assíncrono, não como
+   um resultado no fim. É o que a UI do `adk web` consome para desenhar a
+   conversa e a cascata de tempo.
+
+A troca: menos código que todos os anteriores, e menos controle sobre o loop.
+Se você precisa intervir no meio do raciocínio, o grafo do estágio 03 é o lugar.
+"""
 import sys
 import asyncio
 from pathlib import Path
@@ -13,6 +29,9 @@ from shared import llm
 from shared.tools import web_search, wikipedia_lookup, calculator
 
 
+# Nenhum decorador: função Python pura. O ADK inspeciona a assinatura e a
+# docstring para montar o schema que vai ao modelo. É o mesmo princípio do
+# estágio 02 — a docstring é a interface com o modelo — com menos cerimônia.
 def search_tool(query: str) -> str:
     """DuckDuckGo web search. Returns top 3 result snippets as text."""
     return web_search(query)
@@ -28,6 +47,9 @@ def calc_tool(expression: str) -> str:
     return calculator(expression)
 
 
+# A declaração inteira do agente. Compare com o `build_graph()` do estágio 03:
+# o mesmo comportamento, sem descrever o fluxo — aqui você diz o que o agente é,
+# não como ele roda.
 agent = Agent(
     name="research_assistant",
     model=llm.adk_model(),
@@ -48,6 +70,9 @@ QUERY = (
 
 
 async def run():
+    # O runtime que o ADK traz pronto. `SessionService` guarda o histórico (aqui
+    # em memória; em produção seria um banco) e o `Runner` conduz a execução.
+    # Nos estágios anteriores isso era uma lista de mensagens na mão.
     session_service = InMemorySessionService()
     app_name = "research_app"
     user_id = "user"
@@ -58,6 +83,9 @@ async def run():
     print(f"USER: {QUERY}\n")
     content = types.Content(role="user", parts=[types.Part(text=QUERY)])
     last_text = ""
+    # A execução chega como stream de eventos, não como um resultado no fim:
+    # cada pensamento, cada chamada de ferramenta e cada resposta é um evento
+    # assim que acontece. É o que permite mostrar o agente trabalhando ao vivo.
     async for event in runner.run_async(user_id=user_id, session_id=session.id, new_message=content):
         print(f"--- {event.author} ---")
         if event.content and event.content.parts:

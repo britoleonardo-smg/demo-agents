@@ -1,3 +1,18 @@
+"""Estágio 03 — o mesmo agente, com o fluxo explícito num grafo.
+
+Delta em relação ao estágio 02: por fora, nada. Mesma resposta, mesmas
+ferramentas, mesmo tool calling. O que muda é que **o ciclo deixa de ser
+implícito e vira estrutura**: dois nós e uma aresta condicional que você lê,
+desenha e modifica.
+
+Uma descoberta que vale o palco: no LangSmith, o estágio 02 aparece rotulado
+como `LangGraph`. O `create_agent` do estágio anterior já era isto por baixo —
+este estágio não troca de tecnologia, só tira a tampa.
+
+É por isso que ele é a fundação para o que não cabe nos anteriores: múltiplos
+agentes, aprovação humana no meio do fluxo, checkpoint e retomada, ciclos com
+condição de parada própria.
+"""
 import sys
 from pathlib import Path
 
@@ -38,16 +53,31 @@ QUERY = (
 
 def build_graph():
     tools = [search_tool, wiki_tool, calc_tool]
+    # `bind_tools` informa ao modelo quais ferramentas existem e qual o schema de
+    # cada uma. A partir daqui ele pode devolver uma chamada estruturada em vez
+    # de texto — é o oposto do contrato em prosa do estágio 01.
     llm_with_tools = llm.chat_model().bind_tools(tools)
 
     def agent_node(state: MessagesState):
+        """O nó que pensa: manda o histórico ao modelo e devolve o que ele disse.
+
+        O estado é `MessagesState`, uma lista de mensagens que o LangGraph vai
+        acumulando. Cada nó devolve só o que quer **acrescentar** ao estado.
+        """
         return {"messages": [llm_with_tools.invoke(state["messages"])]}
 
     builder = StateGraph(MessagesState)
     builder.add_node("agent", agent_node)
+    # O nó que age. `ToolNode` lê as chamadas pedidas pelo modelo na última
+    # mensagem, executa as funções e devolve os resultados como mensagens.
     builder.add_node("tools", ToolNode(tools))
     builder.add_edge(START, "agent")
+    # A decisão do loop, explícita: `tools_condition` olha a última mensagem —
+    # se o modelo pediu ferramenta, vai para `tools`; se respondeu, encerra.
+    # Era o `if kind == "action"` do estágio 01, agora como aresta do grafo.
     builder.add_conditional_edges("agent", tools_condition)
+    # A aresta que fecha o ciclo: executou ferramenta, volta a pensar. É este
+    # retorno que faz do grafo um loop, e não um pipeline de mão única.
     builder.add_edge("tools", "agent")
     return builder.compile()
 

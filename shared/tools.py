@@ -1,3 +1,18 @@
+"""As três ferramentas do agente, implementadas uma única vez.
+
+Todos os estágios importam deste arquivo — e o servidor MCP em `mcp-tools/`
+embrulha estas mesmas funções para que o agente dentro do cluster use as
+ferramentas idênticas às do laptop. O que muda entre os estágios é só **como o
+agente decide chamá-las**; o corpo da ferramenta nunca muda.
+
+Duas regras valem para qualquer ferramenta de agente, e estão aplicadas aqui:
+
+1. **Erro vira texto, não exceção.** Toda função devolve `"Error: ..."` em vez
+   de levantar. A exceção mataria o processo; a string volta ao modelo como
+   observação, e ele tenta outro caminho.
+2. **A resposta é curta.** Tudo que sai daqui entra no contexto da próxima
+   chamada ao LLM e é pago em token — a cada volta do loop, não só uma vez.
+"""
 from ddgs import DDGS
 import wikipedia
 import numexpr
