@@ -7,9 +7,9 @@ Material de apresentação em duas partes:
 
 ---
 
-## Parte 1 — Os três agentes
+## Parte 1 — Os quatro agentes
 
-Um agente de pesquisa com três ferramentas (busca web, Wikipedia e calculadora), implementado três vezes. A pergunta é a mesma nos três:
+Um agente de pesquisa com três ferramentas (busca web, Wikipedia e calculadora), implementado quatro vezes. A pergunta é a mesma em todos:
 
 > *"Qual a população de Tóquio segundo a Wikipedia, e quantas vezes ela é maior que a da minha cidade natal, Curitiba?"*
 
@@ -20,8 +20,11 @@ O que muda entre os estágios é **quem faz o loop**.
 | `01_react_prompt/` | Loop ReAct escrito à mão: prompt + regex + dispatch. Prova que "agente" não é mágica. |
 | `02_langchain/` | `create_agent` do LangChain faz o loop. Ferramentas com decorador `@tool`. |
 | `03_langgraph/` | Grafo explícito de estados, com tool calling nativo (sem parsing de texto). |
+| `google_adk/` | Estágio 04: declarativo puro do Google. Ferramentas são funções Python comuns — a docstring vira a descrição, os type hints viram o schema. |
 
-`shared/tools.py` implementa as ferramentas uma única vez — os três importam de lá.
+`shared/tools.py` implementa as ferramentas uma única vez — todos importam de lá.
+
+**Evidência pronta para mostrar:** [`outputs/`](outputs/) tem a saída real dos quatro, e [`screenshots/`](screenshots/) tem as telas das interfaces. Dá para conduzir a apresentação inteira pelo GitHub se a demo ao vivo não puder acontecer.
 
 ### Setup
 
@@ -40,7 +43,12 @@ No `.env`, escolha `LLM_PROVIDER` (`openai` ou `gemini`) e cole a chave correspo
 python 01_react_prompt/agent.py
 python 02_langchain/agent.py
 python 03_langgraph/agent.py
+python google_adk/agent.py
 ```
+
+Cada um imprime o rastro completo: qual ferramenta foi chamada, com que argumento e o que voltou. A saída real de todos está em [`outputs/`](outputs/) — dá para mostrar direto do GitHub, sem rodar nada.
+
+> A pasta do estágio 04 se chama `google_adk` e não `04_google_adk` porque o `adk web` importa a pasta como módulo Python, e nome começando com dígito não é identificador válido. Ele recusa com `Invalid agent name`.
 
 ### Opcional: ver o grafo do LangGraph
 
@@ -49,6 +57,19 @@ langgraph dev
 ```
 
 Abre o LangGraph Studio no navegador com o grafo do estágio 03 desenhado (configurado em `langgraph.json`).
+
+### Opcional: a UI do Google ADK
+
+```bash
+adk web google_adk
+```
+
+Em <http://localhost:8000>, o Dev UI do ADK. Duas abas valem a apresentação:
+
+- **Events** — a conversa com cada chamada de ferramenta, e o grafo do agente desenhado à esquerda.
+- **Traces** — a cascata de tempo. Numa execução medida aqui: 21,25 s no total, **21,2 s esperando o LLM** e 1,9 s somando as duas chamadas de Wikipédia. É o argumento visual de onde o tempo de um agente realmente vai.
+
+Telas das duas em [`screenshots/`](screenshots/).
 
 ---
 

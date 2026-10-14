@@ -5,3 +5,6 @@ __pycache__/
 .DS_Store
 .langgraph_api/
 .worktrees/
+
+# sessões locais do `adk web`
+.adk/

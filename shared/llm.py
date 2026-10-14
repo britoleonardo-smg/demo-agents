@@ -7,6 +7,7 @@ Configure no .env:
 Cada estágio pede o modelo no formato que o seu framework espera:
     complete(prompt)  -> estágio 01 (chamada crua de texto)
     chat_model()      -> estágios 02 e 03 (LangChain / LangGraph)
+    adk_model()       -> estágio 04 (Google ADK)
 """
 import os
 
@@ -66,3 +67,14 @@ def chat_model():
 
     return ChatGoogleGenerativeAI(model=MODEL, google_api_key=os.getenv("GEMINI_API_KEY"))
 
+
+def adk_model():
+    """Modelo para o Google ADK: string para Gemini, wrapper LiteLLM para os demais."""
+    if PROVIDER == "openai":
+        from google.adk.models.lite_llm import LiteLlm
+
+        return LiteLlm(model=f"openai/{MODEL}")
+
+    # ADK lê GOOGLE_API_KEY; repassa a GEMINI_API_KEY do projeto
+    os.environ["GOOGLE_API_KEY"] = os.environ["GEMINI_API_KEY"]
+    return MODEL

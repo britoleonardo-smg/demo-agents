@@ -56,13 +56,29 @@ def build_graph():
 graph = build_graph()
 
 
+def show(messages):
+    """Imprime o rastro completo da execução.
+
+    Sem isto o estágio vira uma caixa preta: entra pergunta, sai resposta. O que
+    a apresentação precisa mostrar é o meio — qual ferramenta o agente escolheu,
+    com que argumento, e o que voltou.
+    """
+    for msg in messages:
+        for call in getattr(msg, "tool_calls", None) or []:
+            print(f"[tool call]   {call['name']}({call['args']})")
+        if type(msg).__name__ == "ToolMessage":
+            texto = str(msg.content).replace("\n", " ")
+            corte = "..." if len(texto) > 300 else ""
+            print(f"[tool result] {msg.name}: {texto[:300]}{corte}\n")
+        elif msg.content and type(msg).__name__ != "HumanMessage":
+            print(f"[resposta]    {msg.content}\n")
+
+
 def main():
-    print(f"MODEL: {llm.describe()}\n")
+    print(f"MODEL: {llm.describe()}")
+    print(f"USER: {QUERY}\n")
     result = graph.invoke({"messages": [("user", QUERY)]})
-    for msg in result["messages"]:
-        print(f"--- {type(msg).__name__} ---")
-        print(getattr(msg, "content", msg))
-        print()
+    show(result["messages"][:-1])
     print(f"FINAL: {result['messages'][-1].content}")
 
 

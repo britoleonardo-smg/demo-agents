@@ -9,6 +9,8 @@ langchain-openai
 langchain-google-genai
 langgraph
 langgraph-cli[inmem]
+google-adk
+litellm
 
 # Ferramentas dos agentes
 ddgs
