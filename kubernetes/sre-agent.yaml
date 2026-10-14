@@ -1,0 +1,88 @@
+# Um agente de SRE que investiga o cluster e pede autorização antes de agir.
+#
+# Nada aqui precisa de instalação extra: o `kagent install --profile demo` já
+# criou o ModelConfig `default-model-config` (OpenAI, gpt-4.1-mini) e o
+# RemoteMCPServer `kagent-tool-server`, que é de onde vêm as tools.
+#
+#   kubectl apply -f kubernetes/sre-agent.yaml
+#
+# Depois disso o agente aparece em `kubectl get agent -n kagent` e na UI.
+apiVersion: kagent.dev/v1alpha2
+kind: Agent
+metadata:
+  name: sre-agent
+  namespace: kagent
+spec:
+  description: Investiga incidentes no cluster e pede aprovação antes de alterar qualquer coisa.
+  type: Declarative
+  declarative:
+    runtime: go
+    # ModelConfig criado pelo próprio `kagent install` — não precisamos declarar
+    # modelo nem chave de API aqui. Se você criou outro ModelConfig pela UI (ou
+    # apagou este), confira o nome com `kubectl get modelconfig -n kagent` e
+    # troque abaixo.
+    modelConfig: default-model-config
+
+    systemMessage: |-
+      Você é um SRE investigando um cluster Kubernetes.
+
+      Como trabalhar:
+      1. Olhe o estado real do cluster antes de opinar. Comece listando os pods
+         e vendo quais não estão Ready ou têm restarts.
+      2. Antes de concluir qualquer coisa, cruze três fontes:
+         - o describe do recurso (motivo do restart, probes, imagem),
+         - os eventos do namespace (o que o kubelet ou o scheduler reclamou),
+         - os logs do container (o que a aplicação disse antes de morrer).
+      3. Só então diga qual é a causa provável.
+
+      Como responder:
+      - Em português, direto, sem enrolação.
+      - Estrutura: o que está acontecendo / o que as evidências mostram /
+        causa provável / o que fazer.
+      - Cite a evidência concreta que te levou à conclusão: a mensagem de erro,
+        o motivo do CrashLoopBackOff, o evento. Sem evidência, não é diagnóstico.
+      - Se os dados não fecharem um diagnóstico, diga o que falta em vez de
+        inventar uma causa.
+
+      Você pode escalar deployments, mas essa ação precisa da aprovação de um
+      humano, que aparece como um botão na interface. Proponha a mudança
+      explicando o porquê; não insista se o humano recusar.
+
+    # As skills são metadados: aparecem na UI como exemplos do que perguntar.
+    a2aConfig:
+      skills:
+        - id: investigar-incidente
+          name: Investigação de incidente
+          description: Descobre por que um pod ou deployment não está saudável, cruzando describe, eventos e logs.
+          tags: [diagnostico, troubleshooting]
+          examples:
+            - O kagent-controller reiniciou algumas vezes. Por quê?
+            - Algum pod do namespace kagent não está saudável?
+            - Me mostre os eventos recentes do namespace kagent.
+        - id: escalar-deployment
+          name: Escala de deployment
+          description: Propõe e aplica mudança de réplicas, sempre com aprovação humana.
+          tags: [operacao, escala]
+          examples:
+            - Escale o deployment helm-agent para 2 réplicas.
+
+    tools:
+      - type: McpServer
+        mcpServer:
+          name: kagent-tool-server
+          kind: RemoteMCPServer
+          apiGroup: kagent.dev
+          # O agente só enxerga as tools listadas aqui. O tool server oferece 23
+          # tools `k8s_*` (incluindo delete e exec); pedimos quatro de leitura e
+          # uma de escrita.
+          toolNames:
+            - k8s_get_resources
+            - k8s_describe_resource
+            - k8s_get_events
+            - k8s_get_pod_logs
+            - k8s_scale
+          # Human-in-the-loop: as tools listadas aqui pausam a execução e abrem
+          # botões de Approve/Reject na UI. As que não estão listadas rodam
+          # direto — por isso as quatro de leitura não aparecem aqui.
+          requireApproval:
+            - k8s_scale

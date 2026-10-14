@@ -113,13 +113,73 @@ Clique no agente de Kubernetes e pergunte algo sobre o cluster, por exemplo:
 
 A UI mostra as chamadas de ferramenta (**Arguments** / **Results**) por baixo da resposta — é ali que fica claro que o agente está lendo o cluster de verdade, e não inventando.
 
-### 5. Sem navegador: o CLI
+### 5. Aplicar o nosso agente
 
-Se não quiser depender da UI no palco:
+Até aqui tudo veio pronto do chart. Agora o ponto da apresentação: **criar um agente é aplicar um YAML**, como qualquer outro objeto do cluster.
+
+`kubernetes/sre-agent.yaml` define o `sre-agent`: um SRE que investiga o cluster com quatro ferramentas de leitura e que **pede aprovação humana** antes de escalar um deployment.
+
+Antes de aplicar, confirme o nome do ModelConfig que o install criou:
+
+```bash
+kubectl get modelconfig -n kagent
+```
+
+Se não for `default-model-config` (acontece se você criou outro modelo pela UI), troque o campo `modelConfig:` no YAML. Então:
+
+```bash
+kubectl apply -f kubernetes/sre-agent.yaml
+kubectl -n kagent wait --for=condition=Ready agent/sre-agent --timeout=120s
+kubectl get agent -n kagent
+```
+
+O `sre-agent` aparece na lista ao lado dos agentes do chart, e o controller sobe um Deployment próprio para ele:
+
+```bash
+kubectl -n kagent get deploy sre-agent
+```
+
+Volte na UI (recarregue a página) e converse com ele. Perguntas que funcionam sem precisar quebrar nada, porque o cluster já tem material:
+
+> *Algum pod do namespace kagent teve restarts? Investigue.*
+
+> *Me mostre os eventos recentes do namespace kagent.*
+
+**O momento do human-in-the-loop.** Peça uma alteração:
+
+> *Escale o deployment helm-agent para 2 réplicas.*
+
+O agente propõe a chamada de `k8s_scale` e **pausa**: a UI mostra botões de **Approve** e **Reject**. Nada acontece no cluster até você clicar. Se recusar, pode dar o motivo, e o motivo volta para o modelo como contexto.
+
+Isso vem destas três linhas do YAML — as ferramentas de leitura não estão na lista, então rodam direto:
+
+```yaml
+requireApproval:
+  - k8s_scale
+```
+
+Para voltar ao estado anterior depois da demo:
+
+```bash
+kubectl -n kagent scale deploy/helm-agent --replicas=1
+```
+
+### 6. Sem navegador: o CLI
 
 ```bash
 kagent get agent
-kagent invoke --agent k8s-agent -t "Quais pods estão com problema no cluster?"
+kagent invoke --agent sre-agent -t "Quais pods do namespace kagent tiveram restarts?"
+```
+
+> O `invoke` depende de um port-forward para o controller, que o `kagent dashboard` deixa de pé — rode os dois em terminais separados. E se ele responder `failed to decode response: json: cannot unmarshal object into ... errordetails.Typed`, não é problema do seu agente: é o CLI 0.10.3 engasgando ao formatar um erro vindo do servidor. A causa mais comum é chave da OpenAI inválida; a UI mostra a mensagem real.
+
+Se a chave estiver errada, troque sem reinstalar nada:
+
+```bash
+kubectl -n kagent create secret generic kagent-openai \
+  --from-literal=OPENAI_API_KEY="$OPENAI_API_KEY" \
+  --dry-run=client -o yaml | kubectl apply -f -
+kubectl -n kagent rollout restart deploy
 ```
 
 ### Vale mostrar: o RBAC padrão é cluster-admin
@@ -132,9 +192,16 @@ kubectl auth can-i delete pods --as=system:serviceaccount:kagent:kagent-tools
 
 O chart tem como fechar isso (`kagent-tools.rbac.readOnly=true`, que troca o ClusterRole por `get, list, watch`, e `kagent-tools.tools.args=["--read-only"]`, que faz o binário nem registrar as ferramentas de escrita), mas o default é aberto para não quebrar instalações existentes. Vale rodar o comando acima no palco: é uma linha, e a resposta fala por si.
 
-### 6. Limpar
+No mesmo espírito, dá para comparar os dois agentes: o `k8s-agent` que vem no perfil `demo` recebe as 18 ferramentas de `k8s_*`, incluindo `k8s_delete_resource` e `k8s_execute_command`, **sem nenhuma na lista de aprovação**. O nosso recebe cinco, e a única de escrita pausa para um humano decidir.
 
 ```bash
+kubectl -n kagent get agent k8s-agent -o jsonpath='{.spec.declarative.tools}' | tr ',' '\n'
+```
+
+### 7. Limpar
+
+```bash
+kubectl delete -f kubernetes/sre-agent.yaml
 kagent uninstall
 kind delete cluster
 ```
