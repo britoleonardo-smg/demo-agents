@@ -54,7 +54,7 @@ Abre o LangGraph Studio no navegador com o grafo do estágio 03 desenhado (confi
 
 ## Parte 2 — kagent no Kubernetes
 
-Aqui o agente deixa de ser um processo no laptop e passa a ser um **recurso do cluster**: `kubectl get agent` lista ele, o RBAC do Kubernetes limita ele.
+Aqui o agente deixa de ser um processo no laptop e passa a ser um **recurso do cluster**: `kubectl get agent` lista ele, o RBAC do Kubernetes limita ele. O fim da seção fecha o círculo — o agente de pesquisa da Parte 1 roda dentro do cluster, com as mesmas três ferramentas.
 
 Isto é o [quickstart oficial](https://kagent.dev/docs/kagent/0.x/getting-started/quickstart/), sem desvios. Versão testada: kagent **0.10.3**.
 
@@ -139,11 +139,11 @@ O `sre-agent` aparece na lista ao lado dos agentes do chart, e o controller sobe
 kubectl -n kagent get deploy sre-agent
 ```
 
-Volte na UI (recarregue a página) e converse com ele. Perguntas que funcionam sem precisar quebrar nada, porque o cluster já tem material:
+Volte na UI (recarregue a página) e converse com ele. O próprio cluster já dá material, sem precisar quebrar nada — o `kagent-controller` reinicia algumas vezes na subida:
 
-> *Algum pod do namespace kagent teve restarts? Investigue.*
+> *Investigue a causa dos restarts do kagent-controller: cruze o describe do pod, os eventos e os logs, e me diga a causa provável.*
 
-> *Me mostre os eventos recentes do namespace kagent.*
+**Dica de palco:** pergunta específica, que já diz o sintoma e o que você quer, tem resposta muito melhor. Com uma pergunta aberta ("algum pod está com problema?") o modelo tende a responder o que achou e perguntar "posso investigar?" em vez de investigar — fica parecendo que travou.
 
 **O momento do human-in-the-loop.** Peça uma alteração:
 
@@ -164,7 +164,61 @@ Para voltar ao estado anterior depois da demo:
 kubectl -n kagent scale deploy/helm-agent --replicas=1
 ```
 
-### 6. Sem navegador: o CLI
+### 6. O agente de pesquisa, com as nossas ferramentas
+
+Aqui a apresentação fecha o círculo: **o agente da Parte 1 rodando dentro do cluster**, com as mesmas três ferramentas. Não é uma reimplementação — o `shared/tools.py` vai para o cluster como está, no mesmo arquivo que os estágios 01, 02 e 03 importam.
+
+Duas peças em [`kubernetes/pesquisa-agent.yaml`](kubernetes/pesquisa-agent.yaml):
+
+| Resource | O que faz |
+|---|---|
+| `MCPServer/pesquisa-tools` | Roda o [`mcp-tools/server.py`](mcp-tools/server.py), que embrulha as três funções do `shared/tools.py` em tools MCP. |
+| `Agent/pesquisa-agent` | O agente de pesquisa, declarativo, usando só essas três tools — nenhuma de Kubernetes. |
+
+**Sem build de imagem.** O código sobe num ConfigMap e roda na imagem oficial do `uv`; o bloco PEP 723 no topo do `server.py` declara as dependências (`fastmcp`, `ddgs`, `wikipedia`, `numexpr`) e o `uv run` instala na subida do pod.
+
+```bash
+kubectl create configmap pesquisa-tools-code -n kagent \
+  --from-file=server.py=mcp-tools/server.py \
+  --from-file=tools.py=shared/tools.py
+
+kubectl apply -f kubernetes/pesquisa-agent.yaml
+kubectl -n kagent wait --for=condition=Ready mcpserver/pesquisa-tools --timeout=300s
+
+# O agente sobe antes do Service do MCP existir e cai no modo de descoberta
+# tardia. Um restart depois do MCP pronto resolve.
+kubectl -n kagent rollout restart deploy/pesquisa-agent
+```
+
+A primeira subida do `pesquisa-tools` leva cerca de um minuto: puxa a imagem do `uv` e instala as dependências. Isso se repete a cada restart do pod, porque o cache não é persistido.
+
+Na UI, o `pesquisa-agent` aceita a mesma pergunta dos estágios 01-03:
+
+> *Qual a população de Tóquio segundo a Wikipédia, e quantas vezes ela é maior que a da minha cidade natal, Curitiba?*
+
+**O detalhe que vale projetar:** o adaptador de transporte na frente do servidor MCP loga cada chamada de ferramenta pelo nome. É a prova de que o agente usou as ferramentas, e não a memória do modelo:
+
+```bash
+kubectl -n kagent logs deploy/pesquisa-tools -c mcp-server --tail=20 | grep mcp.tool
+```
+
+```
+... mcp.tool=wikipedia_lookup duration=1088ms
+... mcp.tool=wikipedia_lookup duration=1112ms
+... mcp.tool=calculator       duration=13ms
+```
+
+Mudou alguma ferramenta no `shared/tools.py`? Recrie o ConfigMap e reinicie os dois pods:
+
+```bash
+kubectl create configmap pesquisa-tools-code -n kagent \
+  --from-file=server.py=mcp-tools/server.py \
+  --from-file=tools.py=shared/tools.py \
+  --dry-run=client -o yaml | kubectl apply -f -
+kubectl -n kagent rollout restart deploy/pesquisa-tools deploy/pesquisa-agent
+```
+
+### 7. Sem navegador: o CLI
 
 ```bash
 kagent get agent
@@ -198,10 +252,10 @@ No mesmo espírito, dá para comparar os dois agentes: o `k8s-agent` que vem no 
 kubectl -n kagent get agent k8s-agent -o jsonpath='{.spec.declarative.tools}' | tr ',' '\n'
 ```
 
-### 7. Limpar
+### 8. Limpar
 
 ```bash
-kubectl delete -f kubernetes/sre-agent.yaml
+kubectl delete -f kubernetes/
 kagent uninstall
 kind delete cluster
 ```

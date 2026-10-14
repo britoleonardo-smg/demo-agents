@@ -1,0 +1,99 @@
+# O agente de pesquisa dos estágios 01-03, agora dentro do cluster.
+#
+# Duas peças:
+#   1. MCPServer `pesquisa-tools` — roda o nosso `mcp-tools/server.py`, que
+#      expõe as três ferramentas do `shared/tools.py` por MCP.
+#   2. Agent `pesquisa-agent` — o mesmo agente de pesquisa, declarativo, usando
+#      aquelas três ferramentas (e nenhuma das ferramentas de Kubernetes).
+#
+# O código vai para o cluster num ConfigMap, criado a partir dos próprios
+# arquivos do repositório (veja o README) — nada de build de imagem:
+#
+#   kubectl create configmap pesquisa-tools-code -n kagent \
+#     --from-file=server.py=mcp-tools/server.py \
+#     --from-file=tools.py=shared/tools.py
+#   kubectl apply -f kubernetes/pesquisa-agent.yaml
+apiVersion: kagent.dev/v1alpha1
+kind: MCPServer
+metadata:
+  name: pesquisa-tools
+  namespace: kagent
+spec:
+  # stdio: o servidor fala MCP por entrada e saída padrão, e o controller sobe
+  # um adaptador na frente dele para expor isso como HTTP no cluster. É o mesmo
+  # modo do exemplo `uvx mcp-server-fetch` da documentação.
+  transportType: stdio
+  stdioTransport: {}
+  deployment:
+    # Imagem oficial do uv. Não construímos nada: o `uv run` lê o bloco PEP 723
+    # do server.py e instala fastmcp, ddgs, wikipedia e numexpr na subida.
+    image: ghcr.io/astral-sh/uv:python3.12-bookworm-slim
+    cmd: uv
+    args:
+      - run
+      - /code/server.py
+    port: 3000
+    env:
+      # O uv precisa de um lugar gravável para o cache e para o venv efêmero.
+      HOME: /tmp
+      UV_CACHE_DIR: /tmp/uv-cache
+    volumes:
+      - name: code
+        configMap:
+          name: pesquisa-tools-code
+    volumeMounts:
+      - name: code
+        mountPath: /code
+---
+apiVersion: kagent.dev/v1alpha2
+kind: Agent
+metadata:
+  name: pesquisa-agent
+  namespace: kagent
+spec:
+  description: Responde perguntas de pesquisa usando busca web, Wikipédia e calculadora.
+  type: Declarative
+  declarative:
+    runtime: go
+    # Confira o nome com `kubectl get modelconfig -n kagent` e troque se o seu
+    # for diferente.
+    modelConfig: default-model-config
+
+    # O mesmo papel dos estágios 01-03, com a mesma regra que importa: não fazer
+    # conta de cabeça. No estágio 01 isso estava no prompt escrito à mão; aqui
+    # está num campo de um objeto do Kubernetes.
+    systemMessage: |-
+      Você é um assistente de pesquisa. Use as ferramentas para responder.
+
+      Como trabalhar:
+      - Busque fatos com wikipedia_lookup; se não achar, use web_search.
+      - NUNCA faça aritmética de cabeça: toda conta passa pelo calculator.
+      - Uma ferramenta por vez, olhando o resultado antes de decidir a próxima.
+
+      Como responder:
+      - Em português, direto.
+      - Diga de onde veio cada número e mostre a conta que você mandou para o
+        calculator.
+      - Se as ferramentas não derem o dado, diga o que falta em vez de inventar.
+
+    a2aConfig:
+      skills:
+        - id: pesquisa-com-calculo
+          name: Pesquisa com cálculo
+          description: Busca dados em fontes públicas e faz contas sobre eles com a calculadora.
+          tags: [pesquisa, wikipedia, calculo]
+          examples:
+            - Qual a população de Tóquio segundo a Wikipédia, e quantas vezes ela é maior que a de Curitiba?
+            - Quantas vezes a área da França cabe na do Brasil?
+
+    tools:
+      - type: McpServer
+        mcpServer:
+          # kind: MCPServer (o nosso), e não RemoteMCPServer (o do chart).
+          name: pesquisa-tools
+          kind: MCPServer
+          apiGroup: kagent.dev
+          toolNames:
+            - web_search
+            - wikipedia_lookup
+            - calculator

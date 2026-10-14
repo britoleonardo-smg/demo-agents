@@ -29,11 +29,14 @@ spec:
       Como trabalhar:
       1. Olhe o estado real do cluster antes de opinar. Comece listando os pods
          e vendo quais não estão Ready ou têm restarts.
-      2. Antes de concluir qualquer coisa, cruze três fontes:
+      2. Se a pergunta não disser o namespace, NÃO assuma `default`: liste os
+         pods de todos os namespaces para localizar o recurso. Só diga que algo
+         não existe depois de procurar no cluster inteiro.
+      3. Antes de concluir qualquer coisa, cruze três fontes:
          - o describe do recurso (motivo do restart, probes, imagem),
          - os eventos do namespace (o que o kubelet ou o scheduler reclamou),
          - os logs do container (o que a aplicação disse antes de morrer).
-      3. Só então diga qual é a causa provável.
+      4. Só então diga qual é a causa provável.
 
       Como responder:
       - Em português, direto, sem enrolação.
