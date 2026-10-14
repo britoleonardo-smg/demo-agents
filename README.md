@@ -50,6 +50,18 @@ Cada um imprime o rastro completo: qual ferramenta foi chamada, com que argument
 
 > A pasta do estágio 04 se chama `google_adk` e não `04_google_adk` porque o `adk web` importa a pasta como módulo Python, e nome começando com dígito não é identificador válido. Ele recusa com `Invalid agent name`.
 
+### Opcional: tracing no LangSmith
+
+Os estágios 02 e 03 são LangChain e LangGraph puros, então o LangSmith funciona **sem tocar no código** — só três linhas no `.env`:
+
+```bash
+LANGSMITH_TRACING=true
+LANGSMITH_API_KEY=lsv2_...
+LANGSMITH_PROJECT=agentes-demo
+```
+
+Rode qualquer um dos dois e a execução aparece em <https://smith.langchain.com>. A árvore de uma execução real está em [`outputs/langsmith.md`](outputs/langsmith.md) — inclusive a revelação de que o `create_agent` do estágio 02 **é LangGraph por baixo**.
+
 ### Opcional: ver o grafo do LangGraph
 
 ```bash

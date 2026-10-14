@@ -9,4 +9,10 @@ A mesma pergunta, nos quatro estágios. Saída copiada do terminal, sem edição
 | 03 — LangGraph | [03_langgraph.md](03_langgraph.md) | Igual ao 02 por fora; por dentro o fluxo virou um grafo explícito, inspecionável e extensível. |
 | 04 — Google ADK | [google_adk.md](google_adk.md) | Declarativo puro, e a execução chega como stream de eventos. |
 
+## Observabilidade
+
+| Arquivo | O que mostra |
+|---|---|
+| [langsmith.md](langsmith.md) | A árvore de execução dos estágios 02 e 03 vista pelo LangSmith: o loop `agent → tools → agent`, a duração de cada passo e os tokens por chamada ao modelo. |
+
 Todas rodaram com `openai/gpt-5-nano`. Os quatro chegaram ao mesmo número: Tóquio ≈ 7,65 vezes Curitiba.
