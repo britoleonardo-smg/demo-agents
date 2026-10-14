@@ -252,10 +252,130 @@ No mesmo espírito, dá para comparar os dois agentes: o `k8s-agent` que vem no 
 kubectl -n kagent get agent k8s-agent -o jsonpath='{.spec.declarative.tools}' | tr ',' '\n'
 ```
 
-### 8. Limpar
+### 8. Tracing: ver o loop do agente por dentro
+
+O kagent não guarda trace nenhum — ele exporta OTLP e esquece. Aponte para onde quiser (Tempo, Jaeger, Honeycomb, Datadog) ou para um collector com o exporter `debug`, que imprime o span no log do pod. Aqui usamos **Tempo + Grafana**.
+
+#### Subir
 
 ```bash
-kubectl delete -f kubernetes/
+helm repo add grafana https://grafana.github.io/helm-charts && helm repo update grafana
+
+helm upgrade --install tempo grafana/tempo --version 1.24.4 \
+  -n telemetry --create-namespace -f kubernetes/observability/tempo-values.yaml
+
+helm upgrade --install grafana grafana/grafana --version 10.5.15 \
+  -n telemetry --create-namespace -f kubernetes/observability/grafana-values.yaml
+```
+
+> O chart do Grafana avisa `this chart is deprecated`. Ele instala e funciona; o caminho novo é o `grafana-operator`, mais cerimônia do que uma demo precisa.
+
+#### Ligar no kagent — em dois lugares
+
+```bash
+helm upgrade kagent oci://ghcr.io/kagent-dev/kagent/helm/kagent --version 0.10.3 \
+  -n kagent --reuse-values \
+  --set otel.tracing.enabled=true \
+  --set otel.tracing.exporter.otlp.endpoint=http://tempo.telemetry.svc.cluster.local:4317 \
+  --set kagent-tools.otel.tracing.enabled=true \
+  --set kagent-tools.otel.tracing.exporter.otlp.endpoint=http://tempo.telemetry.svc.cluster.local:4317
+
+# Sem isto você fica olhando tela vazia: o controller injeta as env vars OTEL no
+# pod do agente, e env var só entra na criação do pod.
+kubectl -n kagent rollout restart deploy -l app.kubernetes.io/part-of=kagent
+```
+
+O `--reuse-values` é de propósito. A receita da doc oficial manda fazer `helm get values kagent > values.yaml`, o que **despeja a sua chave da OpenAI num arquivo em disco**.
+
+#### Olhar
+
+```bash
+kubectl -n telemetry port-forward svc/grafana 3000:80
+```
+
+Em <http://localhost:3000>, **Explore → Tempo**. A senha do admin:
+
+```bash
+kubectl -n telemetry get secret grafana -o jsonpath='{.data.admin-password}' | base64 -d
+```
+
+Procure pelo service com o **nome do agente, com underscore** (`pesquisa_agent`, `sre_agent`). A doc oficial diz para procurar o service `kagent` e a operação `agent_run [agente]` — isso mudou, e procurando como a doc manda você não acha nada.
+
+#### O que o trace mostra
+
+```
+POST /                                4294 ms
+└─ invocation                         4277 ms
+   └─ invoke_agent pesquisa_agent     4234 ms
+      ├─ generate_content gpt-4.1-mini   1530 ms
+      ├─ execute_tool wikipedia_lookup   1168 ms
+      └─ generate_content gpt-4.1-mini    999 ms
+```
+
+O loop do agente desenhado, com a duração de cada etapa. Em geral é aqui que cai a ficha de que **quase todo o tempo é espera do LLM**, não execução de ferramenta.
+
+Os spans seguem as convenções semânticas de GenAI, e trazem o que importa:
+
+| Atributo | O que tem |
+|---|---|
+| `gen_ai.usage.input_tokens` / `output_tokens` | consumo por chamada |
+| `gen_ai.usage.cache_read.input_tokens` | o que veio de cache |
+| `gen_ai.request.model` | modelo usado |
+| `gcp.vertex.agent.tool_call_args` | argumentos da ferramenta |
+| `gcp.vertex.agent.tool_response` | resposta da ferramenta |
+
+> Repare que prompt e resposta de ferramenta **ficam dentro do span**. Ótimo para depurar, atenção em produção: trace com retenção longa é PII com retenção longa.
+
+#### Painéis a partir do trace, sem Prometheus
+
+Com o `metricsGenerator` ligado (está no `tempo-values.yaml`), estas queries TraceQL viram gráfico no Grafana. Todas testadas:
+
+```
+{ name =~ "execute_tool.*" } | rate() by (name)
+→ execute_tool calculator: 0.0167
+
+{ span.gen_ai.usage.output_tokens > 0 } | sum_over_time(span.gen_ai.usage.output_tokens) by (resource.service.name)
+→ pesquisa_agent: 33
+
+{ name =~ "generate_content.*" } | sum_over_time(span.gen_ai.usage.input_tokens) by (name)
+→ generate_content gpt-4.1-mini: 730
+
+{ name =~ "generate_content.*" } | avg_over_time(span.gen_ai.usage.output_tokens)
+→ 16.5
+```
+
+Ou seja: **consumo de token por agente, direto do trace**, sem Prometheus no meio. Isso não existe em métrica em lugar nenhum do kagent — só no span.
+
+#### Duas pegadinhas que custam tempo
+
+1. **`enabled: true` no generator não basta.** Cada processor precisa ser habilitado também em `tempo.overrides.defaults.metrics_generator.processors`. Sem isso a query de métrica falha com `error finding generators: empty ring`.
+2. **`local_blocks` guarda só spans de servidor por padrão.** E os spans que interessam (`execute_tool`, `generate_content`) são internos. Sem `filter_server_spans: false` a query volta **vazia, sem erro nenhum** — o pior tipo de falha para depurar.
+
+#### E se você usa Grafana Cloud
+
+Nenhum dos dois blocos `otel` do kagent tem campo de *headers*, então não há onde colocar o token de autenticação. O caminho é um **Alloy ou OTel Collector** dentro do cluster: o kagent exporta para ele em `:4317`, e ele encaminha com a credencial. De brinde você ganha sampling e filtro de conteúdo — relevante por causa do PII acima.
+
+#### Métricas Prometheus que já existem
+
+Independente de tracing, duas métricas já estão contando e servem de painel:
+
+```bash
+# tool server embutido: chamadas por ferramenta
+kubectl -n kagent port-forward svc/kagent-tools-metrics 8085:8085
+# kagent_tools_mcp_invocations_total{tool_name="k8s_get_resources"} 3
+
+# adaptador na frente do nosso MCP: as nossas tools, sem instrumentar o Python
+kubectl -n kagent port-forward deploy/pesquisa-tools 15020:15020
+# tool_calls_total{server="pesquisa-tools",name="wikipedia_lookup"} 5
+```
+
+O `/metrics` do controller (`controller.metrics.enabled=true`) tem só `controller-runtime` e Go — **nada por agente**. E o `ServiceMonitor` existe no `main` do repositório, mas **não na 0.10.3**.
+
+### 9. Limpar
+
+```bash
+kubectl delete -f kubernetes/ --recursive
+helm uninstall -n telemetry grafana tempo   # se subiu o tracing
 kagent uninstall
 kind delete cluster
 ```

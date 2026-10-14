@@ -1,0 +1,45 @@
+# Values do chart grafana/tempo (single binary).
+#
+#   helm upgrade --install tempo grafana/tempo --version 1.24.4 \
+#     -n telemetry --create-namespace -f kubernetes/observability/tempo-values.yaml
+#
+# Para só VER trace, nada disto é necessário: o chart já aceita OTLP em 4317
+# (gRPC) e 4318 (HTTP) por padrão. Este arquivo serve para o passo seguinte —
+# tirar gráfico do trace.
+tempo:
+  # O metricsGenerator é o que habilita as queries TraceQL de métrica
+  # (`| rate()`, `| sum_over_time(...)`), que é o que vira painel no Grafana.
+  # Sem ele, a query devolve "error finding generators: empty ring".
+  metricsGenerator:
+    enabled: true
+    # Sem Prometheus neste cluster: o processor `local-blocks` abaixo mantém as
+    # métricas dentro do próprio Tempo, e o Grafana consulta por TraceQL.
+    # Com Prometheus, aponte aqui e use também os processors de span-metrics.
+    # remoteWriteUrl: http://prometheus.telemetry:9090/api/v1/write
+    processor:
+      local_blocks:
+        flush_to_storage: true
+        # Sem isto, o processor guarda SÓ spans de servidor — e os spans que
+        # interessam (`execute_tool`, `generate_content`) são internos, então a
+        # query de métrica volta vazia sem dar erro.
+        filter_server_spans: false
+
+  # Ligar o generator no chart não basta: cada processor precisa ser habilitado
+  # nos overrides do tenant. É o passo que falta em quase todo tutorial.
+  overrides:
+    defaults:
+      metrics_generator:
+        processors:
+          - local-blocks
+          # Os dois abaixo alimentam o Service Graph e as métricas RED, mas
+          # exigem um Prometheus com remote-write para serem consultáveis:
+          # - service-graphs
+          # - span-metrics
+
+  # Demo: 24h já é o default do chart e é mais que suficiente.
+  retention: 24h
+
+# Demo: sem PVC. Pod reiniciou, traces perdidos. Para valer, troque por
+# persistence.enabled=true (PVC) ou configure object storage (S3/GCS).
+persistence:
+  enabled: false

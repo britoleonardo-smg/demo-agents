@@ -1,0 +1,32 @@
+# Values do chart grafana/grafana, só com o datasource do Tempo provisionado.
+#
+# Precisa ser arquivo: `datasources` é um mapa de "nome do arquivo" para objeto
+# YAML. Passar isso por `--set-string` falha com
+# "wrong type for value; expected map[string]interface {}; got string".
+#
+#   helm upgrade --install grafana grafana/grafana --version 10.5.15 \
+#     -n telemetry --create-namespace -f kubernetes/observability/grafana-values.yaml
+#
+# A senha do admin fica no Secret `grafana` (chave admin-password).
+datasources:
+  datasources.yaml:
+    apiVersion: 1
+    datasources:
+      - name: Tempo
+        type: tempo
+        # 3200 é a porta HTTP do Tempo single-binary (a 3100 é do Loki).
+        url: http://tempo.telemetry.svc.cluster.local:3200
+        access: proxy
+        isDefault: true
+        jsonData:
+          # Liga o painel de Service Graph e as métricas de span na UI. Só
+          # produz dado se o metricsGenerator do Tempo estiver ligado.
+          serviceMap:
+            datasourceUid: prometheus
+          nodeGraph:
+            enabled: true
+
+# Demo: sem PVC. Dashboard que você criar na UI morre com o pod — o datasource
+# acima é provisionado, então esse volta sempre.
+persistence:
+  enabled: false
